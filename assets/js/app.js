@@ -186,7 +186,7 @@ async function loadProjects({ append = false } = {}) {
       const wrapper = document.createElement("div");
       wrapper.innerHTML = projects.map((project) => {
         const icon = project.icon_url
-          ? '<img src="' + escapeHtml(project.icon_url) + '" alt="" loading="lazy" onerror="this.parentElement.textContent=\\\'C\\\'">'
+          ? '<img src="' + escapeHtml(project.icon_url) + '" alt="" loading="lazy" onerror="this.parentElement.textContent=\\'C\\'">'
           : escapeHtml((project.title || "C").slice(0, 1).toUpperCase());
         const versions = Array.isArray(project.game_versions) ? project.game_versions.slice(0, 2) : [];
         const loaders = Array.isArray(project.loaders) ? project.loaders.slice(0, 2) : [];
