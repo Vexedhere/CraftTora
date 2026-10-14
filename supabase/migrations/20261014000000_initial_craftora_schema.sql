@@ -164,14 +164,14 @@ returns trigger
 language plpgsql
 security definer
 set search_path = ''
-as $
+as $$
 begin
   insert into public.profiles (id, display_name)
   values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', ''))
   on conflict (id) do nothing;
   return new;
 end;
-$;
+$$;
 
 -- This function is only intended to be invoked by the Auth trigger.
 revoke all on function public.handle_new_craftora_user() from public, anon, authenticated;
