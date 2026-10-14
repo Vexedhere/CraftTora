@@ -66,9 +66,18 @@ alter table public.projects enable row level security;
 alter table public.project_versions enable row level security;
 
 grant select on public.profiles to anon, authenticated;
-grant insert, update on public.profiles to authenticated;
+revoke insert, update on public.profiles from authenticated;
+grant insert (id, username, display_name, avatar_url, bio) on public.profiles to authenticated;
+grant update (username, display_name, avatar_url, bio) on public.profiles to authenticated;
+
 grant select on public.projects to anon, authenticated;
-grant insert, update, delete on public.projects to authenticated;
+revoke insert, update, delete on public.projects from authenticated;
+grant insert (owner_id, title, slug, summary, description, project_type, icon_url, source_url, license, game_versions, loaders)
+  on public.projects to authenticated;
+grant update (title, slug, summary, description, project_type, icon_url, source_url, license, game_versions, loaders)
+  on public.projects to authenticated;
+grant delete on public.projects to authenticated;
+
 grant select on public.project_versions to anon, authenticated;
 grant insert, update, delete on public.project_versions to authenticated;
 
