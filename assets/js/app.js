@@ -111,13 +111,6 @@ async function refreshUser() {
   updateAuthUi();
 }
 
-$("#categories").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-category]");
-  if (!button) return;
-  activeCategory = button.dataset.category;
-  renderCategories();
-  loadProjects();
-});
 $("#search").addEventListener("input", () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(loadProjects, 300);
