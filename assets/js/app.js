@@ -44,7 +44,7 @@ function renderProjects(projects) {
       <p class="summary">${escapeHtml(project.summary || "A Minecraft community project.")}</p>
       <div class="pills">${versions.map((v) => '<span class="pill">MC ' + escapeHtml(v) + '</span>').join("")}${loaders.map((v) => '<span class="pill">' + escapeHtml(v) + '</span>').join("")}</div>
       <div class="card-footer"><span>By ${escapeHtml(project.author_name || "Craftora creator")}</span>
-      <span class="review-state">${project.status === "published" ? "Published" : "Pending review"}</span></div>
+      <span class="review-state">${escapeHtml(project.source_name || (project.status === "published" ? "Craftora" : "Pending review"))}</span></div>
       ${project.source_url ? '<a class="source-link" href="' + escapeHtml(project.source_url) + '" target="_blank" rel="noopener noreferrer">Project website ↗</a>' : ""}
     </article>`;
   }).join("");
@@ -56,6 +56,10 @@ async function loadProjects() {
   $("#result-count").textContent = "Searching public catalogues…";
   const params = new URLSearchParams({ limit: "100", index: "downloads" });
   if (term) params.set("query", term);
+  if (activeCategory !== "all") {
+    const facetType = ["plugin", "datapack"].includes(activeCategory) ? "all_project_types" : "project_type";
+    params.set("facets", JSON.stringify([[facetType + ":" + activeCategory]]));
+  }
 
   const [modrinthResult, communityResult] = await Promise.allSettled([
     fetch("https://api.modrinth.com/v2/search?" + params.toString()).then(async (response) => {
