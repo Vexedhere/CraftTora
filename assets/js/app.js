@@ -51,36 +51,97 @@ function renderProjects(projects) {
 }
 
 async function loadProjects() {
-  if (!supabaseReady) {
-    grid.innerHTML = '<div class="empty setup-empty"><span class="empty-icon">⚙</span><h3>Connect Craftora to its own database</h3><p>The independent catalogue is ready for its backend. Add your Supabase URL and publishable key in <code>assets/js/config.js</code>, then apply the SQL migration in <code>supabase/migrations</code>.</p><a class="text-link" href="README.md">Open setup guide ↗</a></div>';
-    $("#result-count").textContent = "Backend not configured";
-    return;
-  }
-
-  grid.innerHTML = '<div class="empty"><h3>Loading Craftora projects…</h3><p>Searching Craftora’s own catalogue.</p></div>';
-  let request = supabase.from("projects")
-    .select("id,title,summary,project_type,icon_url,source_url,game_versions,loaders,status,profiles(username)")
-    .eq("status", "published")
-    .order("created_at", { ascending: false })
-    .limit(60);
-
-  if (activeCategory !== "all") request = request.eq("project_type", activeCategory);
   const term = $("#search").value.trim();
-  if (term) request = request.or("title.ilike.%" + term.replace(/[,%()]/g, " ") + "%,summary.ilike.%" + term.replace(/[,%()]/g, " ") + "%");
+  grid.innerHTML = '<div class="empty"><h3>Discovering Minecraft projects…</h3><p>Searching public project listings and Craftora submissions.</p></div>';
+  $("#result-count").textContent = "Searching public catalogues…";
+  const params = new URLSearchParams({ limit: "100", index: "downloads" });
+  if (term) params.set("query", term);
 
-  const { data, error } = await request;
-  if (error) {
-    grid.innerHTML = '<div class="empty"><h3>Could not load projects</h3><p>Check your Supabase setup and Row Level Security policies, then try again.</p></div>';
-    $("#result-count").textContent = "Catalogue unavailable";
-    console.error("Craftora catalogue error:", error.message);
+  const [modrinthResult, communityResult] = await Promise.allSettled([
+    fetch("https://api.modrinth.com/v2/search?" + params.toString()).then(async (response) => {
+      if (!response.ok) throw new Error("Modrinth returned " + response.status);
+      return response.json();
+    }),
+    supabaseReady ? (async () => {
+      let request = supabase.from("projects")
+        .select("id,title,summary,project_type,icon_url,source_url,game_versions,loaders,status,profiles(username)")
+        .eq("status", "published")
+        .order("created_at", { ascending: false })
+        .limit(60);
+      if (activeCategory !== "all") request = request.eq("project_type", activeCategory);
+      if (term) {
+        const safeTerm = term.replace(/[,%()]/g, " ");
+        request = request.or("title.ilike.%" + safeTerm + "%,summary.ilike.%" + safeTerm + "%");
+      }
+      const { data, error } = await request;
+      if (error) throw error;
+      return (data || []).map((project) => ({
+        ...project,
+        author_name: project.profiles?.username || "Craftora creator",
+        source_name: "Craftora",
+        status: "published"
+      }));
+    })() : Promise.resolve([])
+  ]);
+
+  let publicProjects = [];
+  if (modrinthResult.status === "fulfilled") {
+    publicProjects = (modrinthResult.value.hits || []).map((project) => ({
+      id: "modrinth-" + project.project_id,
+      title: project.title,
+      summary: project.description,
+      project_type: project.project_type,
+      all_project_types: project.all_project_types || [project.project_type],
+      icon_url: project.icon_url,
+      source_url: "https://modrinth.com/project/" + (project.slug || project.project_id),
+      game_versions: project.versions || [],
+      loaders: (project.categories || []).filter((category) =>
+        ["fabric", "forge", "neoforge", "quilt", "paper", "folia", "purpur", "velocity", "bukkit", "spigot"].includes(category.toLowerCase())
+      ),
+      author_name: project.author || "Modrinth creator",
+      status: "published",
+      source_name: "Modrinth",
+      downloads: project.downloads || 0
+    }));
+  }
+
+  let communityProjects = [];
+  if (communityResult.status === "fulfilled") {
+    communityProjects = communityResult.value;
+  } else {
+    console.warn("Craftora community catalogue error:", communityResult.reason?.message || communityResult.reason);
+  }
+
+  const matchesCategory = (project) => activeCategory === "all" ||
+    project.project_type === activeCategory ||
+    (Array.isArray(project.all_project_types) && project.all_project_types.includes(activeCategory));
+  const combined = [...communityProjects, ...publicProjects.filter(matchesCategory)];
+  const seen = new Set();
+  const projects = combined.filter((project) => {
+    const key = project.source_url || project.id;
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  if (!projects.length) {
+    const publicFailed = modrinthResult.status === "rejected";
+    grid.innerHTML = '<div class="empty"><span class="empty-icon">✦</span><h3>' +
+      (publicFailed ? "Could not reach the public catalogue" : "No matching projects found") +
+      '</h3><p>' +
+      (publicFailed
+        ? "The public project service may be temporarily unavailable. Check your connection and try again."
+        : "Try a different search or category. Craftora also welcomes community submissions.") +
+      '</p><button class="btn" type="button" id="retry-projects">Try again ↻</button></div>';
+    $("#retry-projects").addEventListener("click", loadProjects);
+    $("#result-count").textContent = publicFailed ? "Catalogue temporarily unavailable" : "0 projects";
     return;
   }
-  const projects = (data || []).map((project) => ({
-    ...project,
-    author_name: project.profiles?.username || "Craftora creator"
-  }));
+
+  projects.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
   renderProjects(projects);
-  $("#result-count").textContent = projects.length + (projects.length === 1 ? " project" : " projects");
+  $("#result-count").textContent = projects.length + (projects.length === 1 ? " project" : " projects") +
+    " · live public listings" + (communityProjects.length ? " + Craftora" : "");
 }
 
 function renderCategories() {
