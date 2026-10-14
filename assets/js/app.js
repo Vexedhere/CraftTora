@@ -10,6 +10,20 @@ const categories = ["all", "mod", "modpack", "plugin", "shader", "resourcepack",
 let activeCategory = "all";
 let currentUser = null;
 let searchTimer;
+let modrinthOffset = 0;
+let modrinthTotal = 0;
+let requestVersion = 0;
+let loadingMore = false;
+const PAGE_SIZE = 100;
+const loadMoreButton = document.createElement("button");
+loadMoreButton.id = "load-more-projects";
+loadMoreButton.className = "btn";
+loadMoreButton.type = "button";
+loadMoreButton.textContent = "Load more projects ↓";
+loadMoreButton.hidden = true;
+loadMoreButton.style.display = "block";
+loadMoreButton.style.margin = "24px auto 0";
+grid.insertAdjacentElement("afterend", loadMoreButton);
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -50,11 +64,22 @@ function renderProjects(projects) {
   }).join("");
 }
 
-async function loadProjects() {
+async function loadProjects({ append = false } = {}) {
+  if (loadingMore) return;
+  const version = ++requestVersion;
   const term = $("#search").value.trim();
-  grid.innerHTML = '<div class="empty"><h3>Discovering Minecraft projects…</h3><p>Searching public project listings and Craftora submissions.</p></div>';
-  $("#result-count").textContent = "Searching public catalogues…";
-  const params = new URLSearchParams({ limit: "100", index: "downloads" });
+  if (!append) {
+    modrinthOffset = 0;
+    modrinthTotal = 0;
+    loadMoreButton.hidden = true;
+    grid.innerHTML = '<div class="empty"><h3>Discovering Minecraft projects…</h3><p>Searching public project listings and Craftora submissions.</p></div>';
+    $("#result-count").textContent = "Searching public catalogues…";
+  } else {
+    loadingMore = true;
+    loadMoreButton.disabled = true;
+    loadMoreButton.textContent = "Loading more…";
+  }
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(modrinthOffset), index: "downloads" });
   if (term) params.set("query", term);
   if (activeCategory !== "all") {
     const facetType = ["plugin", "datapack"].includes(activeCategory) ? "all_project_types" : "project_type";
@@ -66,7 +91,7 @@ async function loadProjects() {
       if (!response.ok) throw new Error("Modrinth returned " + response.status);
       return response.json();
     }),
-    supabaseReady ? (async () => {
+    (!append && supabaseReady) ? (async () => {
       let request = supabase.from("projects")
         .select("id,title,summary,project_type,icon_url,source_url,game_versions,loaders,status,profiles(username)")
         .eq("status", "published")
@@ -88,8 +113,10 @@ async function loadProjects() {
     })() : Promise.resolve([])
   ]);
 
+  if (version !== requestVersion) { loadingMore = false; return; }
   let publicProjects = [];
   if (modrinthResult.status === "fulfilled") {
+    modrinthTotal = Number(modrinthResult.value.total_hits || 0);
     publicProjects = (modrinthResult.value.hits || []).map((project) => ({
       id: "modrinth-" + project.project_id,
       title: project.title,
@@ -121,14 +148,22 @@ async function loadProjects() {
     (Array.isArray(project.all_project_types) && project.all_project_types.includes(activeCategory));
   const combined = [...communityProjects, ...publicProjects.filter(matchesCategory)];
   const seen = new Set();
-  const projects = combined.filter((project) => {
+  const incoming = combined.filter((project) => {
     const key = project.source_url || project.id;
     if (!key || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+  const existing = append ? Array.from(grid.querySelectorAll(".project-card")).map((card) => card.dataset.sourceUrl).filter(Boolean) : [];
+  const existingSet = new Set(existing);
+  const projects = incoming.filter((project) => {
+    const key = project.source_url || project.id;
+    if (existingSet.has(key)) return false;
+    existingSet.add(key);
+    return true;
+  });
 
-  if (!projects.length) {
+  if (!projects.length && !append) {
     const publicFailed = modrinthResult.status === "rejected";
     grid.innerHTML = '<div class="empty"><span class="empty-icon">✦</span><h3>' +
       (publicFailed ? "Could not reach the public catalogue" : "No matching projects found") +
@@ -139,13 +174,45 @@ async function loadProjects() {
       '</p><button class="btn" type="button" id="retry-projects">Try again ↻</button></div>';
     $("#retry-projects").addEventListener("click", loadProjects);
     $("#result-count").textContent = publicFailed ? "Catalogue temporarily unavailable" : "0 projects";
+    loadingMore = false;
+    loadMoreButton.disabled = false;
+    loadMoreButton.textContent = "Load more projects ↓";
     return;
   }
 
   projects.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
-  renderProjects(projects);
-  $("#result-count").textContent = projects.length + (projects.length === 1 ? " project" : " projects") +
-    " · live public listings" + (communityProjects.length ? " + Craftora" : "");
+  if (append) {
+    if (projects.length) {
+      const wrapper = document.createElement("div");
+      wrapper.innerHTML = projects.map((project) => {
+        const icon = project.icon_url
+          ? '<img src="' + escapeHtml(project.icon_url) + '" alt="" loading="lazy" onerror="this.parentElement.textContent=\\\'C\\\'">'
+          : escapeHtml((project.title || "C").slice(0, 1).toUpperCase());
+        const versions = Array.isArray(project.game_versions) ? project.game_versions.slice(0, 2) : [];
+        const loaders = Array.isArray(project.loaders) ? project.loaders.slice(0, 2) : [];
+        return `<article class="project-card" data-source-url="${escapeHtml(project.source_url || project.id)}">
+          <div class="card-top"><div class="project-icon">${icon}</div><div class="project-heading"><span class="type-label">${escapeHtml(categoryLabel(project.project_type))}</span><h3>${escapeHtml(project.title)}</h3></div></div>
+          <p class="summary">${escapeHtml(project.summary || "A Minecraft community project.")}</p>
+          <div class="pills">${versions.map((v) => '<span class="pill">MC ' + escapeHtml(v) + '</span>').join("")}${loaders.map((v) => '<span class="pill">' + escapeHtml(v) + '</span>').join("")}</div>
+          <div class="card-footer"><span>By ${escapeHtml(project.author_name || "Craftora creator")}</span><span class="review-state">${escapeHtml(project.source_name || "Modrinth")}</span></div>
+          ${project.source_url ? '<a class="source-link" href="' + escapeHtml(project.source_url) + '" target="_blank" rel="noopener noreferrer">Project website ↗</a>' : ""}
+        </article>`;
+      }).join("");
+      grid.insertAdjacentHTML("beforeend", wrapper.innerHTML);
+    }
+  } else {
+    renderProjects(projects);
+    Array.from(grid.querySelectorAll(".project-card")).forEach((card, index) => {
+      if (projects[index]) card.dataset.sourceUrl = projects[index].source_url || projects[index].id;
+    });
+  }
+  modrinthOffset += (modrinthResult.status === "fulfilled" ? (modrinthResult.value.hits || []).length : 0);
+  const displayed = grid.querySelectorAll(".project-card").length;
+  $("#result-count").textContent = displayed + " projects shown · " + (modrinthTotal ? modrinthTotal.toLocaleString() + " Modrinth search matches" : "live public listings") + (communityProjects.length ? " + Craftora" : "");
+  loadMoreButton.hidden = modrinthResult.status !== "fulfilled" || modrinthOffset >= modrinthTotal || (modrinthResult.value.hits || []).length === 0;
+  loadingMore = false;
+  loadMoreButton.disabled = false;
+  loadMoreButton.textContent = loadMoreButton.hidden ? "You’ve reached the end of these results" : "Load more projects ↓";
 }
 
 function renderCategories() {
@@ -175,6 +242,8 @@ async function refreshUser() {
   currentUser = data.user || null;
   updateAuthUi();
 }
+
+loadMoreButton.addEventListener("click", () => loadProjects({ append: true }));
 
 $("#search").addEventListener("input", () => {
   clearTimeout(searchTimer);
